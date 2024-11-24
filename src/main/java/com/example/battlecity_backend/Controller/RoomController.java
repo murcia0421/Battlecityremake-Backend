@@ -8,15 +8,18 @@ import org.springframework.stereotype.Controller;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Controller
 public class RoomController {
 
     private static final Logger logger = LoggerFactory.getLogger(RoomController.class);
 
-    private final Map<String, Integer> roomPlayers = new HashMap<>();
+    private final Map<String, Integer> roomPlayers = new ConcurrentHashMap<>();
 
     public RoomController() {
+        // Inicializamos todas las salas con 0 jugadores
+        roomPlayers.clear();  // Aseguramos que el mapa esté vacío
         roomPlayers.put("room1", 0);
         roomPlayers.put("room2", 0);
         roomPlayers.put("room3", 0);
@@ -25,36 +28,73 @@ public class RoomController {
 
     @MessageMapping("/join")
     @SendTo("/topic/room-status")
-    public String joinRoom(String roomName) {
+    public synchronized Map<String, Object> joinRoom(String roomName) {
         logger.info("Attempting to join room: {}", roomName);
 
+        Map<String, Object> response = new HashMap<>();
+
         if (roomPlayers.containsKey(roomName)) {
-            int players = roomPlayers.get(roomName);
-            if (players < 4) {
-                roomPlayers.put(roomName, players + 1);
-                logger.info("Player joined {}. Current players: {}", roomName, roomPlayers.get(roomName));
-                return "Player joined " + roomName + ". Current players: " + roomPlayers.get(roomName);
+            int currentPlayers = roomPlayers.getOrDefault(roomName, 0);
+
+            if (currentPlayers < 4) {
+                int newPlayerCount = currentPlayers + 1;
+                roomPlayers.put(roomName, newPlayerCount);
+                logger.info("Player joined {}. Current players: {}", roomName, newPlayerCount);
+
+                response.put("status", "success");
+                response.put("message", "Player joined room successfully");
+                response.put("roomName", roomName);
+                response.put("currentPlayers", newPlayerCount);
             } else {
                 logger.warn("Room {} is full!", roomName);
-                return "Room " + roomName + " is full!";
+                response.put("status", "error");
+                response.put("message", "Room is full!");
+                response.put("roomName", roomName);
+                response.put("currentPlayers", currentPlayers);
             }
+        } else {
+            logger.error("Room {} not found!", roomName);
+            response.put("status", "error");
+            response.put("message", "Room not found!");
+            response.put("roomName", roomName);
+            response.put("currentPlayers", 0);
         }
-        logger.error("Room {} not found!", roomName);
-        return "Room not found!";
+
+        return response;
     }
 
     @MessageMapping("/leave")
     @SendTo("/topic/room-status")
-    public String leaveRoom(String roomName) {
+    public synchronized Map<String, Object> leaveRoom(String roomName) {
         logger.info("Attempting to leave room: {}", roomName);
+        logger.info("Current room state before join: {}", roomPlayers);
+
+        Map<String, Object> response = new HashMap<>();
 
         if (roomPlayers.containsKey(roomName)) {
-            int players = Math.max(0, roomPlayers.get(roomName) - 1);
-            roomPlayers.put(roomName, players);
-            logger.info("Player left {}. Current players: {}", roomName, roomPlayers.get(roomName));
-            return "Player left " + roomName + ". Current players: " + roomPlayers.get(roomName);
+            int currentPlayers = roomPlayers.get(roomName);
+            int newPlayerCount = Math.max(0, currentPlayers - 1);
+            roomPlayers.put(roomName, newPlayerCount);
+
+            logger.info("Player left {}. Current players: {}", roomName, newPlayerCount);
+
+            response.put("status", "success");
+            response.put("message", "Player left room successfully");
+            response.put("roomName", roomName);
+            response.put("currentPlayers", newPlayerCount);
+        } else {
+            logger.error("Room {} not found!", roomName);
+            response.put("status", "error");
+            response.put("message", "Room not found!");
+            response.put("roomName", roomName);
+            response.put("currentPlayers", 0);
         }
-        logger.error("Room {} not found!", roomName);
-        return "Room not found!";
+
+        logger.info("Sending response: {}", response);
+        return response;
+    }
+
+    public int getCurrentPlayers(String roomName) {
+        return roomPlayers.getOrDefault(roomName, 0);
     }
 }
